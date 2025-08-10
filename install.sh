@@ -72,6 +72,9 @@ pip install --upgrade pip
 
 # Install missing packages (not in APT)
 pip install \
+    requests \
+    flask \
+    psutil
     gpsd-py3 \
     pytz \
     adafruit-circuitpython-ads1x15 \
