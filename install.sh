@@ -1,12 +1,22 @@
 #!/bin/bash
-# install.sh - GPSJOTS v9.0 Secure Installer (Self-Destructs After Installation)
-# This script installs everything and then self-destructs. Run once per device.
+# install.sh - GPSJOTS v12.0 - Secure Installer for Armbian 25.5.2
+# This script self-destructs and reboots the system after installation.
+# Run once per device.
 
 set -euo pipefail
-echo "🔐 GPSJOTS v9.0 - Secure Automotive Tracker Installer"
-echo "⚠️  This script will self-destruct after installation!"
+echo "🔐 GPSJOTS v12.0 - Secure Automotive Tracker Installer"
+echo "⚠️  This script will self-destruct and reboot the system."
 
-# === 1. Detect Platform ===
+# === 1. Set Hostname ===
+echo "jotstracker" > /etc/hostname
+hostname jotstracker
+grep -q "127.0.1.1" /etc/hosts && sed -i 's/127.0.1.1.*/127.0.1.1 jotstracker/' /etc/hosts
+if ! grep -q "127.0.1.1 jotstracker" /etc/hosts; then
+  echo "127.0.1.1 jotstracker" >> /etc/hosts
+fi
+echo "✅ Hostname set to: jotstracker"
+
+# === 2. Detect Platform ===
 PLATFORM="unknown"
 if grep -qi "orange" /proc/device-tree/model; then PLATFORM="orangepi"
 elif grep -qi "radxa" /proc/device-tree/model; then PLATFORM="radxa"
@@ -17,45 +27,70 @@ if [ "$PLATFORM" = "unknown" ]; then
   exit 1
 fi
 
-# === 2. Create User ===
+# === 3. Create User ===
 if ! id gpsjots &>/dev/null; then
   adduser --disabled-password --gecos "" gpsjots
   echo "gpsjots:gpsjots" | chpasswd
 fi
 
-# === 3. Create Directories ===
+# === 4. Create Directories ===
 mkdir -p /opt/iotindonesia/gpsjots/{web,ota,firmware,data}
 mkdir -p /var/log/gpsjots
 chown -R gpsjots:gpsjots /opt/iotindonesia/gpsjots
 chown -R gpsjots:gpsjots /var/log/gpsjots
 ln -sf /var/log/gpsjots /opt/iotindonesia/gpsjots/logs 2>/dev/null || true
 
-# === 4. Hardware Fingerprint (Anti-Copy) ===
+# === 5. Hardware Fingerprint (Anti-Copy) ===
 MAC=$(cat /sys/class/net/eth0/address 2>/dev/null || echo "")
 SERIAL=$(dmesg | grep -o "Serial: [^ ]*" | head -1 | cut -d' ' -f2 || echo "")
 MODEL=$(cat /proc/device-tree/model 2>/dev/null || echo "unknown")
 FINGERPRINT=$(echo -n "$MAC$SERIAL$MODEL" | sha256sum | cut -d' ' -f1)
 
-echo "$FINGERPRINT" > /opt/iotindonesia/gpsjots/.device_id
-chown gpsjots:gpsjots /opt/iotindonesia/gpsjots/.device_id
-echo "🔐 Device locked to fingerprint: ${FINGERPRINT:0:16}..."
+echo "$FINGERPRINT" > /opt/iotindonesia/gpsjots/data/.device_id
+chown gpsjots:gpsjots /opt/iotindonesia/gpsjots/data/.device_id
+echo "🔐 Device locked to: ${FINGERPRINT:0:16}..."
 
-# === 5. Install Dependencies ===
+# === 6. Install APT Packages (Safe System Packages) ===
 apt update
-apt install -y python3-pip gpsd gpsd-clients i2c-tools sqlite3
-pip3 install gpsd-py3 requests schedule pytz flask psutil adafruit-circuitpython-ads1x15
+apt install -y \
+    python3-requests \
+    python3-flask \
+    python3-psutil \
+    python3-serial \
+    python3-rpi.gpio \
+    python3-full \
+    gpsd gpsd-clients \
+    i2c-tools \
+    sqlite3 \
+    libgpiod2
 
-# === 6. Enable OverlayFS ===
+# === 7. Create Virtual Environment for Missing Packages ===
+python3 -m venv /opt/iotindonesia/gpsjots/venv
+source /opt/iotindonesia/gpsjots/venv/bin/activate
+
+# Upgrade pip
+pip install --upgrade pip
+
+# Install missing packages (not in APT)
+pip install \
+    gpsd-py3 \
+    pytz \
+    adafruit-circuitpython-ads1x15 \
+    schedule
+
+echo "✅ Python packages installed in virtual environment"
+
+# === 8. Enable OverlayFS ===
 echo 'overlay_prefix=armbian' >> /boot/armbianEnv.txt
 echo 'rootoverlay=yes' >> /boot/armbianEnv.txt
 
-# === 7. Bind Mount Data & Logs ===
+# === 9. Bind Mount Data & Logs (Survive OverlayFS) ===
 cat >> /etc/fstab << 'EOF'
 /opt/iotindonesia/gpsjots/data /overlay/upper/opt/iotindonesia/gpsjots/data none bind,nofail 0 0
 /var/log/gpsjots /overlay/upper/var/log/gpsjots none bind,nofail 0 0
 EOF
 
-# === 8. Configure GPSD ===
+# === 10. Configure GPSD ===
 cat > /etc/default/gpsd << 'EOF'
 START_DAEMON="true"
 DEVICES="/dev/ttyAS5"
@@ -63,8 +98,8 @@ USBAUTO="false"
 EOF
 systemctl enable gpsd
 
-# === 9. config.json ===
-cat > /opt/iotindonesia/gpsjots/config.json << 'EOF'
+# === 11. config.json ===
+cat > /opt/iotindonesia/gpsjots/data/config.json << 'EOF'
 {
   "device": { "id": "vehicle_01", "name": "GPSJOTS Tracker" },
   "traccar": {
@@ -80,7 +115,6 @@ cat > /opt/iotindonesia/gpsjots/config.json << 'EOF'
   "ignition": { "gpio": 27, "active_high": true },
   "battery": { "adc_i2c_address": 72, "channel": 0, "voltage_divider_ratio": 0.333 },
   "shutdown": { "enabled": true, "delay_minutes": 5 },
-  "maintenance": { "active": false },
   "hourmeter": {
     "enabled": true,
     "storage_file": "/opt/iotindonesia/gpsjots/data/hourmeter.txt",
@@ -105,8 +139,8 @@ cat > /opt/iotindonesia/gpsjots/config.json << 'EOF'
 }
 EOF
 
-# === 10. jotsmain.py ===
-cat > /opt/iotindonesia/gpsjots/jotsmain.py << 'EOF'
+# === 12. Main Script (Obfuscated Name) ===
+cat > /opt/iotindonesia/gpsjots/main.bin << 'EOF'
 #!/usr/bin/env python3
 import time, gpsd, requests, schedule, json, logging, os, sqlite3, subprocess
 from datetime import datetime, timedelta
@@ -122,7 +156,7 @@ def get_hardware_fingerprint():
 
 def is_authorized():
     try:
-        with open('/opt/iotindonesia/gpsjots/.device_id') as f:
+        with open('/opt/iotindonesia/gpsjots/data/.device_id') as f:
             stored = f.read().strip()
         current = get_hardware_fingerprint()
         return stored == current
@@ -135,7 +169,7 @@ if not is_authorized():
     exit(1)
 
 # === Load Config ===
-CONFIG_FILE = "/opt/iotindonesia/gpsjots/config.json"
+CONFIG_FILE = "/opt/iotindonesia/gpsjots/data/config.json"
 with open(CONFIG_FILE) as f:
     cfg = json.load(f)
 
@@ -191,7 +225,6 @@ def is_ignition():
 
 # === Beep Patterns ===
 def beep_warning():
-    """Long beep: 2 sec ON, 1 sec OFF"""
     pin = cfg['alert']['buzzer_gpio']
     GPIO.setup(pin, GPIO.OUT)
     for _ in range(cfg['immobilizer']['warning_beep_count']):
@@ -201,7 +234,6 @@ def beep_warning():
         time.sleep(1.0)
 
 def beep_alert():
-    """Fast beep: 0.3 sec × 3 times"""
     pin = cfg['alert']['buzzer_gpio']
     GPIO.setup(pin, GPIO.OUT)
     for _ in range(3):
@@ -250,7 +282,7 @@ def update_hourmeter():
 
 # === Maintenance Mode Check ===
 def is_maintenance():
-    return os.path.exists('/opt/iotindonesia/gpsjots/.maintenance_mode')
+    return os.path.exists('/opt/iotindonesia/gpsjots/data/.maintenance_mode')
 
 # === Auto-Shutdown ===
 def monitor_shutdown():
@@ -282,26 +314,22 @@ def activate_immobilizer():
 def handle_immobilization():
     global immobilize_pending, immobilize_start_time
     
-    # Check if request file exists
-    if os.path.exists('/opt/iotindonesia/gpsjots/.immobilize_request') and not immobilize_pending:
+    if os.path.exists('/opt/iotindonesia/gpsjots/data/.immobilize_request') and not immobilize_pending:
         logger.warning("⚠️ Remote immobilization REQUESTED – Starting safety grace period")
         beep_warning()
         immobilize_pending = True
         immobilize_start_time = time.time()
         return
     
-    # If pending, check grace period
     if immobilize_pending:
         elapsed = time.time() - immobilize_start_time
         
-        # If driver turns off ignition → cancel
         if not is_ignition():
             logger.info("✅ Vehicle stopped – Immobilization canceled")
             immobilize_pending = False
-            os.remove('/opt/iotindonesia/gpsjots/.immobilize_request')
+            os.remove('/opt/iotindonesia/gpsjots/data/.immobilize_request')
             return
         
-        # After grace period → activate
         if elapsed >= cfg['immobilizer']['grace_period_sec']:
             logger.warning(f"🛑 Grace period ended ({cfg['immobilizer']['grace_period_sec']}s) – Activating immobilizer")
             activate_immobilizer()
@@ -341,15 +369,15 @@ schedule.every(cfg['traccar']['upload_interval_min']*60).seconds.do(lambda: logg
 schedule.every(cfg['ota']['check_interval_min']*60).seconds.do(lambda: logger.info("Checking OTA..."))
 
 Thread(target=start_web, daemon=True).start()
-logger.info("🚀 GPSJOTS v9.0 Running")
+logger.info("🚀 GPSJOTS v12.0 Running")
 
 while True:
     schedule.run_pending()
     time.sleep(1)
 EOF
 
-# === 11. Web UI ===
-mkdir -p /opt/iotindonesia/gpsjots/web/templates
+# === 13. Web App ===
+mkdir -p /opt/iotindonesia/gpsjots/web
 cat > /opt/iotindonesia/gpsjots/web/app.py << 'EOF'
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, Response
 import json
@@ -359,18 +387,16 @@ import sqlite3
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = "gpsjots_secure_key_2025_v9"
+app.secret_key = "gpsjots_secure_key_2025_v12"
 
-# Credentials
 USERNAME = "gpsjots"
 PASSWORD = "gpsjots"
 
-CONFIG_FILE = "/opt/iotindonesia/gpsjots/config.json"
-MAINT_FILE = "/opt/iotindonesia/gpsjots/.maintenance_mode"
-IMMO_REQUEST = "/opt/iotindonesia/gpsjots/.immobilize_request"
+CONFIG_FILE = "/opt/iotindonesia/gpsjots/data/config.json"
+MAINT_FILE = "/opt/iotindonesia/gpsjots/data/.maintenance_mode"
+IMMO_REQUEST = "/opt/iotindonesia/gpsjots/data/.immobilize_request"
 DB_PATH = os.path.join(json.load(open(CONFIG_FILE))['storage']['data_dir'], 'positions.db')
 
-# === Login Required Decorator ===
 def login_required(f):
     def decorated(*args, **kwargs):
         if 'logged_in' not in session:
@@ -379,7 +405,6 @@ def login_required(f):
     decorated.__name__ = f.__name__
     return decorated
 
-# === Routes ===
 @app.route('/login', methods=['GET', 'POST'])
 def login_page():
     if request.method == 'POST':
@@ -422,15 +447,12 @@ def read_current_hourmeter():
     except:
         return 0.0
 
-# === Save Config ===
 @app.route('/save_config', methods=['POST'])
 @login_required
 def save_config():
     try:
         new_config = request.json
-        # Backup old
         subprocess.run(["cp", CONFIG_FILE, CONFIG_FILE + ".backup"], stderr=subprocess.DEVNULL)
-        # Save new
         with open(CONFIG_FILE, 'w') as f:
             json.dump(new_config, f, indent=2)
         os.system('logger -t gpsjots "🔧 Config updated via web"')
@@ -438,7 +460,6 @@ def save_config():
     except Exception as e:
         return jsonify(error=str(e)), 500
 
-# === Apply Config (Restart Service) ===
 @app.route('/apply_config', methods=['POST'])
 @login_required
 def apply_config():
@@ -446,7 +467,6 @@ def apply_config():
     subprocess.run(["sudo", "systemctl", "restart", "gpsjots"])
     return jsonify(status="restarted")
 
-# === Maintenance Mode ===
 @app.route('/maintenance', methods=['POST'])
 @login_required
 def maintenance():
@@ -463,7 +483,6 @@ def maintenance():
         return jsonify(status="Maintenance OFF")
     return jsonify(error="Invalid action"), 400
 
-# === Reset Immobilization ===
 @app.route('/reset_immobilize', methods=['POST'])
 @login_required
 def reset_immobilize():
@@ -473,12 +492,11 @@ def reset_immobilize():
         return jsonify(status="Immobilization reset")
     return jsonify(status="No request found")
 
-# === Hour Meter Report ===
 @app.route('/generate_report')
 @login_required
 def generate_report():
     days = request.args.get('days', default=30, type=int)
-    days = max(1, min(365, days))  # Limit to reasonable range
+    days = max(1, min(365, days))
     
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -495,7 +513,6 @@ def generate_report():
         rows = c.fetchall()
         conn.close()
         
-        # Build CSV
         csv = "Date,Start HM,End HM,Total Hours\n"
         total = 0.0
         
@@ -522,7 +539,8 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
 EOF
 
-# === 12. Web Templates ===
+# === 14. Web Templates ===
+mkdir -p /opt/iotindonesia/gpsjots/web/templates
 cat > /opt/iotindonesia/gpsjots/web/templates/login.html << 'EOF'
 <!DOCTYPE html>
 <html>
@@ -645,7 +663,7 @@ cat > /opt/iotindonesia/gpsjots/web/templates/dashboard.html << 'EOF'
   <div class="card">
     <div class="card-body">
       <h3>ℹ️ System Information</h3>
-      <p>GPSJOTS v9.0 • Anti-Copy Protected • OverlayFS Enabled</p>
+      <p>GPSJOTS v12.0 • Anti-Copy Protected • OverlayFS Enabled</p>
     </div>
   </div>
 
@@ -781,75 +799,4 @@ document.getElementById('save-config').onclick = () => {
 
 document.getElementById('apply-config').onclick = () => {
   if (confirm('Restart service to apply changes? This will temporarily stop tracking.')) {
-    fetch('/apply_config', { method: 'POST' })
-    .then(() => {
-      alert('Service restarting... You will be logged out.');
-      setTimeout(() => window.location.reload(), 2000);
-    });
-  }
-};
-
-// Report generation
-document.getElementById('generate-report').onclick = () => {
-  const days = document.getElementById('report-days').value;
-  fetch(`/generate_report?days=${days}`)
-  .then(r => r.text())
-  .then(csv => {
-    const blob = new Blob([csv], {type: 'text/csv'});
-    const url = URL.createObjectURL(blob);
-    const a = document.getElementById('download-link');
-    a.href = url;
-    a.download = `hour_meter_report_${new Date().toISOString().slice(0,10)}.csv`;
-    a.style.display = 'inline-block';
-    a.onclick = () => URL.revokeObjectURL(url);
-  })
-  .catch(e => {
-    console.error('Report failed:', e);
-    alert('Failed to generate report');
-  });
-};
-
-// Initial load
-updateStatus();
-setInterval(updateStatus, 30000); // Update every 30 seconds
-</script>
-</html>
-EOF
-
-# === 13. Systemd Service ===
-cat > /etc/systemd/system/gpsjots.service << 'EOF'
-[Unit]
-Description=GPSJOTS Secure Tracker
-After=network.target
-
-[Service]
-Type=simple
-User=gpsjots
-Group=gpsjots
-WorkingDirectory=/opt/iotindonesia/gpsjots
-ExecStart=/usr/bin/python3 jotsmain.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# === 14. Passwordless Restart for Web UI ===
-echo "gpsjots ALL=(ALL) NOPASSWD: /bin/systemctl restart gpsjots" | sudo tee /etc/sudoers.d/gpsjots
-
-# === 15. Final Setup ===
-systemctl daemon-reload
-systemctl enable gpsjots gpsd
-systemctl start gpsjots
-
-# === 16. Harden & Self-Destruct ===
-chown -R gpsjots:gpsjots /opt/iotindonesia/gpsjots
-chmod -R 700 /opt/iotindonesia/gpsjots
-find /opt/iotindonesia/gpsjots -name "*.py" -exec chmod +x {} \;
-
-echo "✅ Installation Complete!"
-echo "🌐 Web UI: http://$(hostname -I | awk '{print $1}'):8080"
-echo "🔧 Login: gpsjots / gpsjots"
-echo "📊 Generate hour meter reports from web UI"
-echo "🔐 This installer will now self-destruct."
-rm -- "$0"
+    fetch('/apply_config', { method: '
