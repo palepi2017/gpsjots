@@ -1,0 +1,31 @@
+﻿Feature,Implemented
+"✅ Runs on Armbian (Orange Pi 4A, Radxa, Raspberry Pi)",✔️ Auto-detect
+✅ GPS via /dev/ttyAS5,✔️
+✅ Installed in /opt/iotindonesia/gpsjots/,✔️
+✅ Logs in /var/log/gpsjots/,✔️
+✅ Local geofence + per-zone speed limit,✔️
+🔊 Beep alert (GPIO 17) on over-speed,✔️
+📤 Upload to Traccar: http://iot.josuatristan.com,✔️
+📧 Email alerts from Traccar (on alarm),✔️
+💾 Local SQLite storage (5-day buffer),✔️
+🔁 Auto-upload when reconnected,✔️
+🌐 Web UI: configure via IP:8080,✔️
+🔐 Web login: gpsjots / gpsjots,✔️
+🔄 Over-the-Air (OTA) updates,✔️
+🔐 Enable/disable OTA via config,✔️
+⚙️ All settings in config.json,✔️
+🧠 Auto-set timezone from GPS,✔️
+📊 CPU & uptime monitoring,✔️
+🔌 Ignition/ACC detection (GPIO 27),✔️
+🔋 Battery voltage (ADS1115 ADC),✔️
+⏱️ Precision Hour Meter (0.01h resolution),✔️
+🔁 Auto-shutdown on ignition off (5-min delay),✔️
+🛠️ Maintenance mode (disable shutdown via web),✔️
+📈 Hour meter CSV report (downloadable via web),✔️
+🛑 Safe remote immobilization (60s beep + delay),✔️
+🔄 Reset immobilization via web UI,✔️
+🔐 Hardware anti-copy protection (MAC+Serial+Model),✔️
+🖥️ Hostname set to `jotstracker`,✔️
+🛡️ OverlayFS with bind mounts (power-fail safe),✔️
+🧹 Installer self-destructs + auto-reboot,✔️
+💾 All critical data survives reboots,✔️
