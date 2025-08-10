@@ -73,10 +73,13 @@ pip install --upgrade pip
 
 # Install missing packages (not in APT)
 pip install \
+    requests \
     gpsd-py3 \
     pytz \
+    schedule \
     adafruit-circuitpython-ads1x15 \
-    schedule
+    flask \
+    psutil
 
 echo "✅ Python packages installed in virtual environment"
 
@@ -93,7 +96,7 @@ EOF
 # === 10. Configure GPSD ===
 cat > /etc/default/gpsd << 'EOF'
 START_DAEMON="true"
-DEVICES="/dev/ttyAS5"
+DEVICES="/dev/ttyS0"
 USBAUTO="false"
 EOF
 systemctl enable gpsd
@@ -109,7 +112,7 @@ cat > /opt/iotindonesia/gpsjots/data/config.json << 'EOF'
     "upload_interval_min": 5,
     "geofence_sync_interval_min": 30
   },
-  "gps": { "device": "/dev/ttyAS5", "check_interval_sec": 30 },
+  "gps": { "device": "/dev/ttyS0", "check_interval_sec": 30 },
   "storage": { "max_days": 5, "data_dir": "/opt/iotindonesia/gpsjots/data" },
   "alert": { "buzzer_gpio": 17, "beep_times": 2, "beep_delay": 0.3 },
   "ignition": { "gpio": 27, "active_high": true },
@@ -870,4 +873,5 @@ echo "✅ Installation Complete!"
 echo "🌐 Web UI: http://jotstracker.local:8080 or http://$(hostname -I | awk '{print $1}'):8080"
 echo "🔧 Login: gpsjots / gpsjots"
 echo "🔐 This installer will now self-destruct and reboot the system."
+
 rm -- "$0" && reboot
