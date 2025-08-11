@@ -9,6 +9,7 @@ echo "⚠️  This script will self-destruct and reboot the system."
 # === 1. Set Hostname ===
 echo "jotstracker" > /etc/hostname
 hostname jotstracker
+groupadd gpio
 grep -q "127.0.1.1" /etc/hosts && sed -i 's/127.0.1.1.*/127.0.1.1 jotstracker/' /etc/hosts
 if ! grep -q "127.0.1.1 jotstracker" /etc/hosts; then
   echo "127.0.1.1 jotstracker" >> /etc/hosts
@@ -68,17 +69,17 @@ python3 -m venv /opt/iotindonesia/gpsjots/venv
 source /opt/iotindonesia/gpsjots/venv/bin/activate
 
 # Upgrade pip
-pip install --upgrade pip
+pip3 install --upgrade pip
 
 # Install missing packages (not in APT)
-pip install \
+pip3 install \
     requests \
-    flask \
-    psutil
     gpsd-py3 \
     pytz \
+    schedule \
     adafruit-circuitpython-ads1x15 \
-    schedule
+    flask \
+    psutil
 
 echo "✅ Python packages installed in virtual environment"
 
